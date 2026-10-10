@@ -95,3 +95,19 @@ def download_job_zip(job_id: str, db: Session = Depends(get_db)):
             z.write(c.file_path, f"{c.row_index:04d}-{slug}.pdf")
     return Response(buf.getvalue(), media_type="application/zip",
                     headers={"Content-Disposition": f'attachment; filename="job-{job_id[:8]}.zip"'})
+
+
+
+@app.post("/jobs/{job_id}/retry", status_code=202)
+def retry_job(job_id: str, background: BackgroundTasks, db: Session = Depends(get_db)):
+    job = _job_or_404(db, job_id)
+    if job.status in ("pending", "processing"):
+        raise HTTPException(409, "Job is still running")
+    reset = service.reset_failed_generations(db, job_id)
+    if reset == 0:
+        raise HTTPException(409, "No failed generations to retry")
+    job.status = "pending"
+    job.finished_at = None
+    db.commit()
+    background.add_task(service.process_job, job_id)
+    return {"job_id": job_id, "retrying": reset, "status_url": f"/jobs/{job_id}"}

@@ -85,3 +85,20 @@ def process_job(job_id: str) -> None:
         raise
     finally:
         db.close()
+
+
+def reset_failed_generations(db: Session, job_id: str) -> int:
+    """Move certificates that failed during generation back to pending.
+    Validation failures are skipped, because retrying bad data cannot help."""
+    certs = db.scalars(
+        select(Certificate).where(
+            Certificate.job_id == job_id,
+            Certificate.status == "failed",
+            Certificate.error.like("generation error:%"),
+        )
+    ).all()
+    for c in certs:
+        c.status = "pending"
+        c.error = None
+    db.commit()
+    return len(certs)

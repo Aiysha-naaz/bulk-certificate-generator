@@ -79,3 +79,34 @@ def test_retrieve_certificates(client):
 
     z = client.get(f"/jobs/{job_id}/download")
     assert z.status_code == 200 and z.headers["content-type"] == "application/zip"
+    
+
+def test_retry_failed_generation(client, monkeypatch):
+    real = generator.generate_pdf
+    state = {"fail": True}
+
+    def flaky(cert_id, name, *a, **kw):
+        if name == "Boom" and state["fail"]:
+            raise RuntimeError("render failed")
+        return real(cert_id, name, *a, **kw)
+
+    monkeypatch.setattr(generator, "generate_pdf", flaky)
+    recipients = [GOOD[0], {"name": "Boom", "email": "boom@example.com"},
+                  {"name": "Bad", "email": "nope"}]
+    job_id = make_job(client, recipients).json()["job_id"]
+
+    s = client.get(f"/jobs/{job_id}").json()
+    assert (s["succeeded"], s["failed"]) == (1, 2)
+
+    state["fail"] = False  # the problem is fixed, so a retry should work
+    r = client.post(f"/jobs/{job_id}/retry")
+    assert r.status_code == 202
+    assert r.json()["retrying"] == 1  # only Boom, not the validation failure
+
+    s = client.get(f"/jobs/{job_id}").json()
+    assert (s["succeeded"], s["failed"]) == (2, 1)
+    assert s["status"] == "completed_with_errors"
+
+    # Only the validation failure is left, so retrying again is refused
+    assert client.post(f"/jobs/{job_id}/retry").status_code == 409
+    assert client.post("/jobs/does-not-exist/retry").status_code == 404
