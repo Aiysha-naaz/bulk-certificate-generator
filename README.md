@@ -53,6 +53,7 @@ Returns `202 Accepted` with a `job_id` and a `status_url`. `issued_date` and `co
 | `GET /jobs/{job_id}/certificates` | Per-recipient result with error message; filter with `?status=failed` |
 | `GET /certificates/{cert_id}/download` | Download one PDF |
 | `GET /jobs/{job_id}/download` | Download a ZIP of all successful PDFs |
+| `POST /jobs/{job_id}/retry` | Re-run only the certificates that failed during generation (validation failures are not retried) |
 
 Job statuses: `pending`, `processing`, `completed`, `completed_with_errors`, `failed`.
 
@@ -63,6 +64,8 @@ Job statuses: `pending`, `processing`, `completed`, `completed_with_errors`, `fa
 **Per-recipient validation.** The request shape is validated by FastAPI (422 on a malformed request). Each recipient is then validated individually, so one bad row does not reject the whole request. Invalid rows are stored as `failed` with a reason, and valid rows still get certificates.
 
 **Failure isolation.** Each certificate is generated in its own try/except and committed separately. One failure never stops the rest of the job, and progress is visible while the job runs.
+
+**Retry.** Only certificates that failed during generation are retried. Validation failures are skipped, because bad data would fail the same way again. `process_job` only picks up `pending` rows, so re-running it redoes just the reset ones.
 
 **Status derived from data.** Counts come from a `GROUP BY` query on the certificates table instead of stored counters, so they cannot drift out of sync.
 
@@ -76,4 +79,3 @@ Job statuses: `pending`, `processing`, `completed`, `completed_with_errors`, `fa
 - **Multiple workers.** Two workers could pick up the same job. I would claim a job with an atomic `UPDATE ... WHERE status = 'pending'` before processing.
 - **Storage.** PDFs are on local disk. In production I would use object storage such as S3.
 - **Authentication.** Endpoints are open. A real deployment needs auth and per-user access to jobs.
-- **Retry.** Failed generations cannot yet be retried. A `POST /jobs/{id}/retry` endpoint could reset generation failures to pending and re-run the job.
